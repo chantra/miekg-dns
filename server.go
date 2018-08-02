@@ -4,12 +4,14 @@ package dns
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"encoding/binary"
 	"io"
 	"net"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 )
 
@@ -294,6 +296,8 @@ type Server struct {
 	IdleTimeout func() time.Duration
 	// Secret(s) for Tsig map[<zonename>]<base64 secret>. The zonename must be in canonical form (lowercase, fqdn, see RFC 4034 Section 6.2).
 	TsigSecret map[string]string
+	// Should we use SO_REUSE_PORT
+	Soreuseport bool
 	// Unsafe instructs the server to disregard any sanity checks and directly hand the message to
 	// the handler. It will specifically not check if the query has the QR bit not set.
 	Unsafe bool
@@ -367,8 +371,25 @@ func (srv *Server) spawnWorker(w *response) {
 	}
 }
 
+func controlOnConnSetupSoReusePort(network string, address string, c syscall.RawConn) error {
+
+	var operr error
+	var fn = func(s uintptr) {
+		operr = syscall.SetsockoptInt(int(s), syscall.SOL_SOCKET, 0xF /* syscall.SO_REUSE_PORT */, 1)
+	}
+	if err := c.Control(fn); err != nil {
+		return err
+	}
+	if operr != nil {
+		return operr
+	}
+	return nil
+
+}
+
 // ListenAndServe starts a nameserver on the configured address in *Server.
 func (srv *Server) ListenAndServe() error {
+	var lc net.ListenConfig
 	srv.lock.Lock()
 	defer srv.lock.Unlock()
 	if srv.started {
@@ -384,13 +405,17 @@ func (srv *Server) ListenAndServe() error {
 	}
 	srv.queue = make(chan *response)
 	defer close(srv.queue)
+
+	if srv.Soreuseport {
+		lc = net.ListenConfig{Control: controlOnConnSetupSoReusePort}
+	} else {
+		lc = net.ListenConfig{Control: nil}
+	}
+
 	switch srv.Net {
 	case "tcp", "tcp4", "tcp6":
-		a, err := net.ResolveTCPAddr(srv.Net, addr)
-		if err != nil {
-			return err
-		}
-		l, err := net.ListenTCP(srv.Net, a)
+
+		l, err := lc.Listen(context.Background(), srv.Net, addr)
 		if err != nil {
 			return err
 		}
@@ -407,11 +432,11 @@ func (srv *Server) ListenAndServe() error {
 		} else if srv.Net == "tcp6-tls" {
 			network = "tcp6"
 		}
-
-		l, err := tls.Listen(network, addr, srv.TLSConfig)
+		tcpl, err := lc.Listen(context.Background(), network, addr)
 		if err != nil {
 			return err
 		}
+		l := tls.NewListener(tcpl, srv.TLSConfig)
 		srv.Listener = l
 		srv.started = true
 		srv.lock.Unlock()
@@ -419,23 +444,21 @@ func (srv *Server) ListenAndServe() error {
 		srv.lock.Lock() // to satisfy the defer at the top
 		return err
 	case "udp", "udp4", "udp6":
-		a, err := net.ResolveUDPAddr(srv.Net, addr)
+
+		l, err := lc.ListenPacket(context.Background(), srv.Net, addr)
 		if err != nil {
 			return err
 		}
-		l, err := net.ListenUDP(srv.Net, a)
-		if err != nil {
-			return err
-		}
-		if e := setUDPSocketOptions(l); e != nil {
+		if e := setUDPSocketOptions(l.(*net.UDPConn)); e != nil {
 			return e
 		}
 		srv.PacketConn = l
 		srv.started = true
 		srv.lock.Unlock()
-		err = srv.serveUDP(l)
+		err = srv.serveUDP(l.(*net.UDPConn))
 		srv.lock.Lock() // to satisfy the defer at the top
 		return err
+
 	}
 	return &Error{err: "bad network"}
 }
