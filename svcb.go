@@ -240,6 +240,24 @@ func (rr *HTTPS) parse(c *zlexer, o string) *ParseError {
 	return rr.SVCB.parse(c, o)
 }
 
+// DELEG RR. Everything valid for SVCB applies to DELEG as well.
+// Except that the DELEG record is intended for use with the DELEG protocols.
+//
+// NOTE: The HTTPS/SVCB RFCs are in the draft stage.
+// The API, including constants and types related to SVCBKeyValues, may
+// change in future versions in accordance with the latest drafts.
+type DELEG struct {
+	SVCB
+}
+
+func (rr *DELEG) String() string {
+	return rr.SVCB.String()
+}
+
+func (rr *DELEG) parse(c *zlexer, o string) *ParseError {
+	return rr.SVCB.parse(c, o)
+}
+
 // SVCBKeyValue defines a key=value pair for the SVCB RR type.
 // An SVCB RR can have multiple SVCBKeyValues appended to it.
 type SVCBKeyValue interface {
