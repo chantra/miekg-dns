@@ -85,7 +85,6 @@ const (
 	TypeZONEMD     uint16 = 63
 	TypeSVCB       uint16 = 64
 	TypeHTTPS      uint16 = 65
-	TypeDELEG      uint16 = 66
 	TypeSPF        uint16 = 99
 	TypeUINFO      uint16 = 100
 	TypeUID        uint16 = 101
@@ -114,6 +113,7 @@ const (
 
 	TypeTA       uint16 = 32768
 	TypeDLV      uint16 = 32769
+	TypeDELEG    uint16 = 65287
 	TypeReserved uint16 = 65535
 
 	// valid Question.Qclass
